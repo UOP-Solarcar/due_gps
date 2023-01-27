@@ -20,4 +20,5 @@ int main() {
         line.set_value(1);
     }
     line.release();
+    return EXIT_SUCCESS;
 }
