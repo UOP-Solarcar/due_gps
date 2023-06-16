@@ -1,170 +1,139 @@
 #include <Adafruit_GPS.h>
+#include <Adafruit_MPU6050.h>
 #include <Arduino.h>
-#include <Wire.h>
 #include <due_can.h>
 
-Adafruit_GPS GPS(&Serial3);
+Adafruit_GPS gps(&Serial3);
+Adafruit_MPU6050 mpu;
+
+bool gps_status = false, mpu_status = false;
 
 char c;
-
-// I2C address of the MPU-6050. If AD0 pin is set to  HIGH, the I2C address will
-// be 0x69.
-const int MPU_ADDR = 0x68;
 
 void setup() {
   // CAN
   Can0.init(CAN_BPS_500K);
   // GPS
   Serial.begin(115200);
-  GPS.begin(9600);
-  GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
-  GPS.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
+  gps.begin(9600);
+  gps.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
+  gps.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
 
-  // Accel
-  Wire.begin();
-  // Begins a transmission to the I2C slave (GY-521 board)
-  Wire.beginTransmission(MPU_ADDR);
-  Wire.write(0x6B); // PWR_MGMT_1 register
-  Wire.write(0);    // set to zero (wakes up the MPU-6050)
-  Wire.endTransmission(true);
+  mpu.begin();
 }
 
 void clearGPS() {
-  while (!GPS.newNMEAreceived()) {
-    c = GPS.read();
+  while (!gps.newNMEAreceived()) {
+    c = gps.read();
   }
-  GPS.parse(GPS.lastNMEA());
+  gps.parse(gps.lastNMEA());
 
-  while (!GPS.newNMEAreceived()) {
-    c = GPS.read();
+  while (!gps.newNMEAreceived()) {
+    c = gps.read();
   }
-  GPS.parse(GPS.lastNMEA());
+  gps.parse(gps.lastNMEA());
 }
 
 void loop() {
   // GPS
   clearGPS();
 
-  while (!GPS.newNMEAreceived()) {
-    c = GPS.read();
+  while (!gps.newNMEAreceived()) {
+    c = gps.read();
   }
 
-  GPS.parse(GPS.lastNMEA());
+  gps.parse(gps.lastNMEA());
 
   Serial.print("Time: ");
-  Serial.print(GPS.hour, DEC);
+  Serial.print(gps.hour, DEC);
   Serial.print(':');
-  Serial.print(GPS.minute, DEC);
+  Serial.print(gps.minute, DEC);
   Serial.print(':');
-  Serial.print(GPS.seconds, DEC);
+  Serial.print(gps.seconds, DEC);
   Serial.print('.');
-  Serial.print(GPS.milliseconds);
+  Serial.print(gps.milliseconds);
 
   Serial.print(" | Date: ");
-  Serial.print(GPS.day, DEC);
+  Serial.print(gps.day, DEC);
   Serial.print('/');
-  Serial.print(GPS.month, DEC);
+  Serial.print(gps.month, DEC);
   Serial.print("/20");
-  Serial.print(GPS.year, DEC);
+  Serial.print(gps.year, DEC);
 
   Serial.print(" | Fix: ");
-  Serial.print(GPS.fix);
+  Serial.print(gps.fix);
   Serial.print(" quality: ");
-  Serial.print(GPS.fixquality);
+  Serial.print(gps.fixquality);
   Serial.print(" | Satellites: ");
-  Serial.println(GPS.satellites);
+  Serial.println(gps.satellites);
 
-  if (GPS.fix) {
+  if (gps.fix) {
     Serial.print("Location: ");
-    Serial.print(GPS.latitude, 4);
-    Serial.print(GPS.lat);
+    Serial.print(gps.latitude, 4);
+    Serial.print(gps.lat);
     Serial.print(", ");
-    Serial.print(GPS.longitude, 4);
-    Serial.print(GPS.lon);
+    Serial.print(gps.longitude, 4);
+    Serial.print(gps.lon);
     Serial.print(" | Google Maps location: ");
-    Serial.print(GPS.latitudeDegrees, 4);
+    Serial.print(gps.latitudeDegrees, 4);
     Serial.print(", ");
-    Serial.print(GPS.longitudeDegrees, 4);
+    Serial.print(gps.longitudeDegrees, 4);
 
     Serial.print(" | Speed (knots): ");
-    Serial.print(GPS.speed);
+    Serial.print(gps.speed);
     Serial.print(" | Heading: ");
-    Serial.print(GPS.angle);
+    Serial.print(gps.angle);
     Serial.print(" | Altitude: ");
-    Serial.println(GPS.altitude);
+    Serial.println(gps.altitude);
   }
 
   // Accel
-  Wire.beginTransmission(MPU_ADDR);
+  sensors_event_t accel, gyro, temp;
+  mpu.getEvent(&accel, &gyro, &temp);
+  {
+    CAN_FRAME can_frame;
+    can_frame.id = 0x21;
+    can_frame.length = 8;
+    can_frame.data.uint32[0] = *(uint32_t *)&accel.acceleration.x;
+    can_frame.data.uint32[1] = *(uint32_t *)&accel.acceleration.y;
+    Can0.sendFrame(can_frame);
+  }
+  {
+    CAN_FRAME can_frame;
+    can_frame.id = 0x22;
+    can_frame.length = 8;
+    can_frame.data.uint32[0] = *(uint32_t *)&accel.acceleration.z;
+    can_frame.data.uint32[1] = *(uint32_t *)&gyro.gyro.x;
+    Can0.sendFrame(can_frame);
+  }
+  {
+    CAN_FRAME can_frame;
+    can_frame.id = 0x23;
+    can_frame.length = 8;
+    can_frame.data.uint32[0] = *(uint32_t *)&gyro.gyro.y;
+    can_frame.data.uint32[1] = *(uint32_t *)&gyro.gyro.z;
+    Can0.sendFrame(can_frame);
+  }
+  {
+    CAN_FRAME can_frame;
+    can_frame.id = 0x24;
+    can_frame.length = 4;
+    can_frame.data.uint32[0] = *(uint32_t *)&temp.temperature;
+    Can0.sendFrame(can_frame);
+  }
 
-  // starting with register 0x3B (ACCEL_XOUT_H) [MPU-6000 and
-  // MPU-6050 Register Map and Descriptions Revision 4.2, p.40]
-  Wire.write(0x3B);
-
-  // the parameter indicates that the Arduino will send a restart.
-  // As a result, the connection is kept active.
-  Wire.endTransmission(false);
-
-  // request a total of 7*2=14 registers
-  Wire.requestFrom(MPU_ADDR, 7 * 2, true);
-
-  // "Wire.read()<<8 | Wire.read();" means two registers are read and stored in
-  // the same variable
-
-  // reading registers: 0x3B (ACCEL_XOUT_H) and 0x3C (ACCEL_XOUT_L)
-  int16_t accelerometer_x = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x3D (ACCEL_YOUT_H) and 0x3E (ACCEL_YOUT_L)
-  int16_t accelerometer_y = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x3F (ACCEL_ZOUT_H) and 0x40 (ACCEL_ZOUT_L)
-  int16_t accelerometer_z = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x41 (TEMP_OUT_H) and 0x42 (TEMP_OUT_L)
-  int16_t temperature = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x43 (GYRO_XOUT_H) and 0x44 (GYRO_XOUT_L)
-  int16_t gyro_x = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x45 (GYRO_YOUT_H) and 0x46 (GYRO_YOUT_L)
-  int16_t gyro_y = Wire.read() << 8 | Wire.read();
-
-  // reading registers: 0x47 (GYRO_ZOUT_H) and 0x48 (GYRO_ZOUT_L)
-  int16_t gyro_z = Wire.read() << 8 | Wire.read();
-
-  CAN_FRAME can_frame;
-  can_frame.id = 0x21;
-  can_frame.length = 8;
-  can_frame.data.int16[0] = temperature;
-  can_frame.data.int16[1] = accelerometer_x;
-  can_frame.data.int16[2] = accelerometer_y;
-  can_frame.data.int16[3] = accelerometer_z;
-  Can0.sendFrame(can_frame);
-
-  can_frame.id = 0x22;
-  can_frame.length = 6;
-  can_frame.data.int16[0] = gyro_x;
-  can_frame.data.int16[1] = gyro_y;
-  can_frame.data.int16[2] = gyro_z;
-  can_frame.data.int16[3] = 0;
-  Can0.sendFrame(can_frame);
-
-  // print out data
   Serial.print("aX = ");
-  Serial.print(accelerometer_x);
+  Serial.print(accel.acceleration.x);
   Serial.print(" | aY = ");
-  Serial.print(accelerometer_y);
+  Serial.print(accel.acceleration.y);
   Serial.print(" | aZ = ");
-  Serial.print(accelerometer_z);
-  // the following equation was taken from the documentation [MPU-6000/MPU-6050
-  // Register Map and Description, p.30]
+  Serial.print(accel.acceleration.z);
   Serial.print(" | tmp = ");
-  Serial.print(temperature / 340.00 + 36.53);
-
+  Serial.print(temp.temperature);
   Serial.print(" | gX = ");
-  Serial.print(gyro_x);
+  Serial.print(gyro.gyro.x);
   Serial.print(" | gY = ");
-  Serial.print(gyro_y);
+  Serial.print(gyro.gyro.y);
   Serial.print(" | gZ = ");
-  Serial.println(gyro_z);
+  Serial.println(gyro.gyro.z);
 }
