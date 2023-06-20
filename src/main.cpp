@@ -3,6 +3,10 @@
 #include <Arduino.h>
 #include <due_can.h>
 
+#ifndef MONITOR_SPEED
+#define MONITOR_SPEED 115200
+#endif
+
 Adafruit_GPS gps(&Serial3);
 Adafruit_MPU6050 mpu;
 
@@ -14,7 +18,7 @@ void setup() {
   // CAN
   Can0.init(CAN_BPS_500K);
   // GPS
-  Serial.begin(115200);
+  Serial.begin(MONITOR_SPEED);
   gps.begin(9600);
   gps.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCGGA);
   gps.sendCommand(PMTK_SET_NMEA_UPDATE_1HZ);
